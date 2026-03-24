@@ -39,7 +39,7 @@ for c in range(len(num_cores)):
 		injection_rate = 0.02
 		while(pkt_lat < 200.00 ):
 			############ gem5 command-line ###########
-			os.system("{0:s} -d {1:s}/{2:d}/{4:s}/{3:s}/freq-{7:d}/vc-{5:d}/inj-{6:1.2f} configs/example/garnet_synth_traffic.py --topology=irregularMesh_XY --num-cpus={2:d} --num-dirs={2:d} --mesh-rows={8:d} --network=garnet2.0 --router-latency=1 --sim-cycles={9:d} --spin=1 --conf-file={10:s} --spin-file=spin_configs/SR_{10:s} --spin-freq={7:d} --spin-mult=1 --uTurn-crossbar=1 --inj-vnet=0 --vcs-per-vnet={5:d} --injectionrate={6:1.2f} --synthetic={11:s} --routing-algorithm={12:d} ".format(binary, out_dir, num_cores[c],  bench_caps[b], routing_algorithm[rout_], vc_, injection_rate, spin_freq, num_rows[c], cycles, file[c], bench[b], rout_ ))
+			os.system("{0:s} -d {1:s}/{2:d}/{4:s}/{3:s}/freq-{7:d}/vc-{5:d}/inj-{6:1.2f} configs/example/garnet_synth_traffic.py --topology=irregularMesh_XY --num-cpus={2:d} --num-dirs={2:d} --mesh-rows={8:d} --network=garnet2.0 --router-latency=1 --sim-cycles={9:d} --spin=1 --conf-file={10:s} --spin-file=spin_configs/SR_{10:s} --spin-freq={7:d} --spin-mult=1 --uTurn-crossbar=1 --inj-vnet=0 --vcs-per-vnet={5:d} --injectionrate={6:1.2f} --synthetic={11:s} --routing-algorithm={12:d} 2>/dev/null".format(binary, out_dir, num_cores[c],  bench_caps[b], routing_algorithm[rout_], vc_, injection_rate, spin_freq, num_rows[c], cycles, file[c], bench[b], rout_ ))
 
 
 			# convert flot to string with required precision
