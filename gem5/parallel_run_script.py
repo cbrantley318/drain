@@ -3,7 +3,7 @@ import subprocess
 from multiprocessing import Pool
 
 binary = 'build/Garnet_standalone/gem5.opt'
-os.system("scons -j15 {}".format(binary))
+os.system("scons -j20 {}".format(binary))
 
 bench_caps = ["BIT_ROTATION", "SHUFFLE", "TRANSPOSE"]
 bench = ["bit_rotation", "shuffle", "transpose"]
