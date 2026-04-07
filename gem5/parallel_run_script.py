@@ -3,7 +3,7 @@ import subprocess
 from multiprocessing import Pool
 
 binary = 'build/Garnet_standalone/gem5.opt'
-os.system("scons -j20 {}".format(binary))
+# os.system("scons -j15 {}".format(binary))
 
 bench_caps = ["BIT_ROTATION", "SHUFFLE", "TRANSPOSE"]
 bench = ["bit_rotation", "shuffle", "transpose"]
@@ -20,8 +20,10 @@ os.system('mkdir results')
 out_dir = './results'
 cycles = 100000
 vc_ = 4
+stall_thresh_ = 50
 rout_ = 0
 spin_freq = 1024
+
 
 def run_sim(args):
     c, b, injection_rate = args
@@ -33,10 +35,11 @@ def run_sim(args):
            "--spin-file=spin_configs/SR_{10:s} --spin-freq={7:d} --spin-mult=1 "
            "--uTurn-crossbar=1 --inj-vnet=0 --vcs-per-vnet={5:d} "
            "--injectionrate={6:1.2f} --synthetic={11:s} "
-           "--routing-algorithm={12:d} 2>/dev/null").format(
+           "--stall-threshold={12:d} "
+           "--routing-algorithm={13:d} 2>>/tmp/gem5_errors.log").format(
                binary, out_dir, num_cores[c], bench_caps[b],
                routing_algorithm[rout_], vc_, injection_rate,
-               spin_freq, num_rows[c], cycles, file[c], bench[b], rout_)
+               spin_freq, num_rows[c], cycles, file[c], bench[b], stall_thresh_, rout_)
     os.system(cmd)
 
 # Build all jobs upfront
@@ -50,7 +53,7 @@ for c in range(len(num_cores)):
 
 print("Running {} simulations across 20 cores...".format(len(jobs)))
 
-pool = Pool(processes=20)
+pool = Pool(processes=15)
 pool.map(run_sim, jobs)
 pool.close()
 pool.join()
@@ -72,8 +75,9 @@ for c in range(len(num_cores)):
                 packet_latency = subprocess.check_output(
                     "grep -nri average_flit_latency {0:s} | sed 's/.*system.ruby.network.average_flit_latency\s*//'".format(output_dir),
                     shell=True)
-                pkt_lat = float(packet_latency)
+                # pkt_lat = float(packet_latency)
                 print("injection_rate={1:1.2f} \t Packet Latency: {0:f}".format(pkt_lat, injection_rate))
                 injection_rate += 0.02
+                injection_rate = round(injection_rate, 2)
             else:
                 pkt_lat = 1000
