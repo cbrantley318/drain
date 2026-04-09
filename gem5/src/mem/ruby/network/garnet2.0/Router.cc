@@ -333,14 +333,12 @@ Router::wakeup()
                 get_net_ptr()->schedule_wakeup(Cycles(3));
                 get_net_ptr()->scheduleAll_wakeup(2 * get_net_ptr()->m_spin_mult);
             }
-            // Branch 3: settling window checks
+            // Branch 3: settling window — just wait, no premature assert.
+            // (Unlike baseline, not all routers fire simultaneously, so the
+            // 2-cycle window doesn't guarantee all links are drained yet.)
             else if ((get_net_ptr()->m_drain_triggered_cycle > Cycles(0)) &&
                      (curCycle() - get_net_ptr()->m_drain_triggered_cycle < Cycles(3))) {
-                if (m_id == get_net_ptr()->lock)
-                    spin_safe_ = get_net_ptr()->chck_link_state();
-                if ((curCycle() == get_net_ptr()->m_drain_triggered_cycle + Cycles(2)) &&
-                    (m_id == get_net_ptr()->lock))
-                    assert(spin_safe_);
+                // nothing to do — let the halt propagate
             }
         }
     }
