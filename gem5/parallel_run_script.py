@@ -5,8 +5,8 @@ from multiprocessing import Pool
 binary = 'build/Garnet_standalone/gem5.opt'
 # os.system("scons -j15 {}".format(binary))
 
-bench_caps = ["BIT_ROTATION", "SHUFFLE", "TRANSPOSE"]
-bench = ["bit_rotation", "shuffle", "transpose"]
+bench_caps = ["BIT_ROTATION", "TORNADO", "TRANSPOSE", "UNIFORM_RANDOM"]
+bench = ["bit_rotation", "tornado", "transpose", "uniform_random"]
 file = ['64_nodes-connectivity_matrix_0-links_removed_0.txt', '256_nodes-connectivity_matrix_0-links_removed_0.txt']
 
 routing_algorithm = ["ADAPT_RAND_", "UP_DN_", "Escape_VC_UP_DN_"]
@@ -16,11 +16,11 @@ num_cores = [64]
 # num_rows = [8, 16]
 num_rows = [8]
 
-start_injection_rate = 0.02   #DEFAULT
-# max_injection_rate = 1.0    # multiple of 0.02
+start_injection_rate = 0.02     #DEFAULT = 0.02 (KEEP IT MULTIPLE OF 0.02)
+max_injection_rate = 0.8        #DEFAULT = 1.0
+inj_rate_delta = 0.04           #MAKE SURE THIS IS MULTIPLE OF 0.02 OR AT LEAST 0.01, OTHERWISE FILENAMES WILL SUCK
 
 # start_injection_rate = 0.52
-max_injection_rate = 0.7
 
 
 os.system('rm -rf ./results')
@@ -32,8 +32,8 @@ cycles = 100000
 vc_ = 4
 stall_thresh_ = 0
 # stall_thresh_ = 50
-rout_ = 0
-spin_freq = 65536
+rout_ = 2
+spin_freq = 1024
 
 
 def run_sim(args):
@@ -59,7 +59,7 @@ for c in range(len(num_cores)):
         injection_rate = start_injection_rate
         while injection_rate <= max_injection_rate:
             jobs.append((c, b, round(injection_rate, 2)))
-            injection_rate += 0.02
+            injection_rate += inj_rate_delta
 
 print("Running {} simulations across 20 cores...".format(len(jobs)))
 
@@ -87,7 +87,7 @@ for c in range(len(num_cores)):
                     shell=True)
                 # pkt_lat = float(packet_latency)
                 print("injection_rate={1:1.2f} \t Packet Latency: {0:f}".format(pkt_lat, injection_rate))
-                injection_rate += 0.02
+                injection_rate += inj_rate_delta
                 injection_rate = round(injection_rate, 2)
             else:
                 pkt_lat = 1000
