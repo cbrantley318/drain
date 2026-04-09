@@ -77,6 +77,9 @@ class GarnetNetwork(RubyNetwork):
                     "Enable quadrant-based regional drain scheduling")
     num_quadrants = Param.UInt32(4,
                     "Number of mesh quadrants for regional drain (2 or 4)")
+    regional_spin_file = Param.String(
+                    "spin_configs/SR_16_nodes-connectivity_matrix_0-links_removed_0.txt",
+                    "16-node spin ring file for true regional drain")
 
 class GarnetNetworkInterface(ClockedObject):
     type = 'GarnetNetworkInterface'

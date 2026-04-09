@@ -113,9 +113,10 @@ GarnetNetwork::GarnetNetwork(const Params *p)
     m_spin_file = p->spin_file;
     m_uTurn_crossbar = p->uTurn_crossbar;
     drain_all_vc = p->drain_all_vc;
-    m_stall_threshold = p->stall_threshold;
-    m_regional_drain  = p->regional_drain;
-    m_num_quadrants   = p->num_quadrants;
+    m_stall_threshold    = p->stall_threshold;
+    m_regional_drain     = p->regional_drain;
+    m_num_quadrants      = p->num_quadrants;
+    m_regional_spin_file = p->regional_spin_file;
     m_drain_triggered_cycle = Cycles(0);
 
     lock = -1;
@@ -182,6 +183,229 @@ GarnetNetwork::getQuadrantOf(int router_id) const
     int qrow = (m_num_quadrants >= 2) ? (row / (m_num_rows / 2)) : 0;
     int qcol = (m_num_quadrants == 4) ? (col / (m_num_cols / 2)) : 0;
     return qrow * (m_num_quadrants == 4 ? 2 : 1) + qcol;
+}
+
+// ---------------------------------------------------------------------------
+// True regional drain helpers
+// ---------------------------------------------------------------------------
+
+void
+GarnetNetwork::init_spinRings_quadrant()
+{
+    int q_rows = m_num_rows / 2;
+    int q_cols = m_num_cols / 2;
+
+    ifstream infile;
+    infile.open(m_regional_spin_file);
+    if (!infile.is_open())
+        fatal("Couldn't open regional spin file: %s\n", m_regional_spin_file.c_str());
+
+    vector<pair<int,string>> entries;
+    string data, data1;
+    while (infile >> data >> data1) {
+        if      (data1 == "N" || data1 == "n") data1 = "North";
+        else if (data1 == "E" || data1 == "e") data1 = "East";
+        else if (data1 == "S" || data1 == "s") data1 = "South";
+        else if (data1 == "W" || data1 == "w") data1 = "West";
+        else fatal("Illegal direction in regional spin file: %s\n", data1.c_str());
+        entries.push_back({stoi(data), data1});
+    }
+    infile.close();
+
+    if (entries.empty())
+        fatal("Regional spin file is empty: %s\n", m_regional_spin_file.c_str());
+
+    // Determine ring[0] direction from last entry (same logic as init_spinRing)
+    int last_id = entries.back().first;
+    string ring0_dir;
+    if (last_id == 1)
+        ring0_dir = "East";
+    else if (last_id == q_rows)
+        ring0_dir = "North";
+    else
+        fatal("Unexpected last router %d in regional spin file (expected 1 or %d)\n",
+              last_id, q_rows);
+
+    m_q_spinRings.resize(m_num_quadrants);
+
+    for (int q = 0; q < (int)m_num_quadrants; q++) {
+        int row_off = (q / 2) * q_rows;
+        int col_off = (q % 2) * q_cols;
+        auto& ring = m_q_spinRings[q];
+
+        // ring[0]: top-left router of this quadrant
+        int id0 = row_off * m_num_cols + col_off;
+        ring.push_back(spinStruct(id0, ring0_dir));
+
+        // All file entries remapped to 8x8 IDs
+        for (auto& e : entries) {
+            int r4 = e.first / q_cols;
+            int c4 = e.first % q_cols;
+            int mapped = (r4 + row_off) * m_num_cols + (c4 + col_off);
+            ring.push_back(spinStruct(mapped, e.second));
+        }
+
+        // Close the loop (ring[N] == ring[0])
+        ring.push_back(ring[0]);
+    }
+}
+
+void
+GarnetNetwork::set_halt_quadrant(int q, bool val)
+{
+    m_q_halt[q] = val;
+    for (auto* r : m_routers)
+        if (getQuadrantOf(r->get_id()) == q)
+            r->halt_ = val;
+}
+
+void
+GarnetNetwork::scheduleQuadrant_wakeup(int q, uint32_t k)
+{
+    for (auto* r : m_routers)
+        if (getQuadrantOf(r->get_id()) == q)
+            r->schedule_wakeup(Cycles(k));
+}
+
+void
+GarnetNetwork::set_flit_time_quadrant(int q, int vc_)
+{
+    for (auto* router : m_routers) {
+        if (getQuadrantOf(router->get_id()) != q) continue;
+        for (int inport = 0; inport < router->get_num_inports(); inport++) {
+            if (!router->get_inputUnit_ref()[inport]->vc_isEmpty(vc_)) {
+                PortDirection dirn_ = router->get_inputUnit_ref()[inport]->get_direction();
+                if (dirn_ == "North" || dirn_ == "South" ||
+                    dirn_ == "East"  || dirn_ == "West") {
+                    flit* t_flit = router->get_inputUnit_ref()[inport]->peekTopFlit(vc_);
+                    assert(t_flit != nullptr);
+                    t_flit->advance_stage(SA_, curCycle() + Cycles(2*m_spin_mult));
+                }
+            }
+        }
+    }
+}
+
+void
+GarnetNetwork::doSpin_quadrant(int q, int vc_)
+{
+    auto& ring = m_q_spinRings[q];
+
+    // Count flits at ring positions only (not all non-local inports)
+    int spun_pkt_num = 0;
+    for (int idx = 0; idx < (int)ring.size() - 1; idx++) {
+        Router* router = m_routers[ring[idx].router_id_];
+        int inport = router->m_routing_unit
+                         ->m_inports_dirn2idx[ring[idx].inport_dir_];
+        if (!router->get_inputUnit_ref()[inport]->vc_isEmpty(vc_))
+            spun_pkt_num++;
+    }
+
+    m_total_spins++;
+    int num_pkts = 0;
+
+    // Stage 1: Remove flits from ring positions
+    for (int idx = 0; idx < (int)ring.size() - 1; idx++) {
+        Router* router = m_routers[ring[idx].router_id_];
+        int inport = router->m_routing_unit
+                         ->m_inports_dirn2idx[ring[idx].inport_dir_];
+        if (router->get_inputUnit_ref()[inport]->vc_isEmpty(vc_)) {
+            ring[idx+1].flit_ = nullptr;
+            m_bubble++;
+        } else {
+            flit* t_flit = router->get_inputUnit_ref()[inport]->peekTopFlit(vc_);
+            std::vector<int> pref_outport =
+                router->m_routing_unit->lookupRoutingTable_pref_outport(
+                    t_flit->get_vnet(), t_flit->get_route().net_dest);
+            ring[idx+1].flit_ =
+                router->get_inputUnit_ref()[inport]->getTopFlit(vc_);
+            num_pkts++;
+            int idx_;
+            for (idx_ = 0; idx_ < (int)pref_outport.size(); idx_++) {
+                PortDirection next_hop_dir_ =
+                    router->get_outputUnit_ref().at(pref_outport[idx_])->get_direction();
+                int pref_router_id = get_upstreamId(next_hop_dir_, router->get_id());
+                assert(pref_router_id != -1);
+                if (pref_router_id == ring[idx+1].router_id_) {
+                    m_fwd_progress++;
+                    break;
+                }
+            }
+            if (idx_ == (int)pref_outport.size())
+                m_misroute++;
+
+            assert(ring[idx+1].flit_->hops_needed_before_spin == -1);
+            ring[idx+1].flit_->hops_needed_before_spin =
+                router->compute_hops_remaining(ring[idx+1].flit_);
+
+            router->get_inputUnit_ref()[inport]->set_vc_idle(vc_, curCycle());
+
+            Router* upstream_router =
+                get_upstreamrouter(ring[idx].inport_dir_, router->get_id());
+            assert(upstream_router != nullptr);
+            PortDirection outportDirn =
+                get_upstreamOutportDirn(ring[idx].inport_dir_);
+            assert(outportDirn != "Local");
+            int outport = upstream_router->m_routing_unit
+                              ->m_outports_dirn2idx[outportDirn];
+            upstream_router->get_outputUnit_ref()[outport]->increment_credit(vc_);
+            upstream_router->get_outputUnit_ref()[outport]->set_vc_state(
+                IDLE_, vc_, curCycle());
+        }
+    }
+
+    assert(spun_pkt_num == num_pkts);
+
+    // Stage 2: Insert flits
+    for (int idx = 1; idx < (int)ring.size(); idx++) {
+        if (ring[idx].flit_ != nullptr) {
+            Router* router = m_routers[ring[idx].router_id_];
+            int inport = router->m_routing_unit
+                             ->m_inports_dirn2idx[ring[idx].inport_dir_];
+            assert(inport < (int)router->get_inputUnit_ref().size());
+            flit* t_flit = ring[idx].flit_;
+            num_pkts--;
+            int outport = router->route_compute(
+                t_flit->get_route(), inport, ring[idx].inport_dir_);
+            t_flit->set_outport(outport);
+            assert(outport < (int)router->get_outputUnit_ref().size());
+            PortDirection outdir = router->getOutportDirection(outport);
+            t_flit->set_outport_dir(outdir);
+            t_flit->increment_hops();
+            router->get_inputUnit_ref()[inport]->m_vcs[vc_]->insertFlit(t_flit);
+
+            assert(t_flit->hops_needed_after_spin == -1);
+            t_flit->hops_needed_after_spin =
+                router->compute_hops_remaining(t_flit);
+            if (t_flit->hops_needed_after_spin > t_flit->hops_needed_before_spin)
+                m_total_misroute += (t_flit->hops_needed_after_spin -
+                                     t_flit->hops_needed_before_spin);
+            t_flit->hops_needed_after_spin  = -1;
+            t_flit->hops_needed_before_spin = -1;
+
+            assert(router->get_inputUnit_ref()[inport]->m_vcs[vc_]->get_state()
+                   == IDLE_);
+            router->get_inputUnit_ref()[inport]->set_vc_active(vc_, curCycle());
+
+            Router* upstream_router =
+                get_upstreamrouter(ring[idx].inport_dir_, router->get_id());
+            assert(upstream_router != nullptr);
+            PortDirection outportDirn =
+                get_upstreamOutportDirn(ring[idx].inport_dir_);
+            assert(outportDirn != "Local");
+            int upstream_outport = upstream_router->m_routing_unit
+                                       ->m_outports_dirn2idx[outportDirn];
+            upstream_router->get_outputUnit_ref()[upstream_outport]
+                ->decrement_credit(vc_);
+            upstream_router->get_outputUnit_ref()[upstream_outport]->set_vc_state(
+                ACTIVE_, vc_, curCycle());
+        }
+    }
+
+    assert(num_pkts == 0);
+
+    // Clean ring flit pointers
+    for (auto& s : ring) s.flit_ = nullptr;
 }
 
 void
@@ -558,6 +782,11 @@ GarnetNetwork::init()
         assert(m_stall_threshold > 0);
         m_q_cooldown_until.assign(m_num_quadrants, 0);
         m_q_needs_drain.assign(m_num_quadrants, false);
+        // True regional drain state
+        m_q_halt.assign(m_num_quadrants, false);
+        m_q_lock.assign(m_num_quadrants, -1);
+        m_q_drain_triggered.assign(m_num_quadrants, Cycles(0));
+        init_spinRings_quadrant();
     }
 
     // FaultModel: declare each router to the fault model

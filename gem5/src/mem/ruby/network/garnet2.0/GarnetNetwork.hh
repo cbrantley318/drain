@@ -360,7 +360,7 @@ class GarnetNetwork : public Network, public Consumer
     uint32_t m_spin_mult;
     uint32_t drain_all_vc;
 
-    // Regional drain
+    // Regional drain (stall-triggered, per-quadrant detection)
     bool m_regional_drain;
     uint32_t m_num_quadrants;
     uint32_t m_stall_threshold;
@@ -409,6 +409,21 @@ class GarnetNetwork : public Network, public Consumer
     // flit *dummy_flit_ = new flit();
     vector<spinStruct> spinRing; // this is the spinRing
     void print_spinRing();
+
+    // True regional drain: per-quadrant independent spin rings + halt
+    // (spinStruct must be defined above before this vector-of-vectors)
+    std::vector<std::vector<spinStruct>> m_q_spinRings;   // per-quadrant spin rings
+    std::vector<bool>   m_q_halt;            // per-quadrant halt state (for border stalling)
+    std::vector<int>    m_q_lock;            // per-quadrant drain lock (-1=free)
+    std::vector<Cycles> m_q_drain_triggered; // per-quadrant drain trigger cycle (0=idle)
+    std::string         m_regional_spin_file;
+
+    void set_halt_quadrant(int q, bool val);
+    void doSpin_quadrant(int q, int vc);
+    void set_flit_time_quadrant(int q, int vc);
+    void init_spinRings_quadrant();
+    bool isQuadrantHalted(int q) const { return m_q_halt[q]; }
+    void scheduleQuadrant_wakeup(int q, uint32_t k);
 
     void increment_trace_flits_received();
 

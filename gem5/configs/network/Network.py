@@ -124,6 +124,9 @@ def define_options(parser):
                       help="Enable quadrant-based regional drain scheduling")
     parser.add_option("--num-quadrants", type="int", default=4,
                       help="Number of quadrants for regional drain (2 or 4)")
+    parser.add_option("--regional-spin-file", type="string",
+                      default="spin_configs/SR_16_nodes-connectivity_matrix_0-links_removed_0.txt",
+                      help="16-node per-quadrant spin ring file for regional drain")
     parser.add_option("--ni-inj", type="string", default="fcfs",
                       help="'rr'|'fcfs'")
     parser.add_option("--inj-single-vnet", action="store",
@@ -231,3 +234,4 @@ def init_network(options, network, InterfaceClass):
       print "regional drain enabled, num_quadrants: ", options.num_quadrants
       network.regional_drain = True
       network.num_quadrants = options.num_quadrants
+      network.regional_spin_file = options.regional_spin_file

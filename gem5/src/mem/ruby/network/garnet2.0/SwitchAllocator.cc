@@ -428,6 +428,19 @@ SwitchAllocator::send_allowed(int inport, int invc, int outport, int outvc)
     if (!has_outvc || !has_credit)
         return false;
 
+    // Border stalling: don't forward into a halted quadrant (true regional drain)
+    if (m_router->get_net_ptr()->m_regional_drain) {
+        PortDirection outdir = m_output_unit[outport]->get_direction();
+        if (outdir != "Local") {
+            int downstream = m_router->get_net_ptr()->get_upstreamId(
+                outdir, m_router->get_id());
+            if (downstream != -1) {
+                int dq = m_router->get_net_ptr()->getQuadrantOf(downstream);
+                if (m_router->get_net_ptr()->isQuadrantHalted(dq))
+                    return false;
+            }
+        }
+    }
 
     // protocol ordering check
     if ((m_router->get_net_ptr())->isVNetOrdered(vnet)) {

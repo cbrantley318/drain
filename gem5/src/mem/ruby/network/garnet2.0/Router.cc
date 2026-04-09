@@ -220,15 +220,14 @@ Router::wakeup()
 
         } else {
             // -------------------------------------------------------
-            // REGIONAL DRAIN: per-quadrant deadline tracking
+            // TRUE REGIONAL DRAIN: per-quadrant independent spin rings
+            // Each quadrant drains independently; other quadrants keep running.
             // -------------------------------------------------------
             int q = get_net_ptr()->getQuadrantOf(m_id);
 
-            // Branch 1: stall-triggered drain per quadrant.
-            // Scan this router's VCs; if any flit has waited > stall_threshold
-            // and the quadrant is past its cooldown, mark it as needing a drain.
+            // Branch 1: Stall scan + per-quadrant drain trigger
             if (curCycle() > 0 &&
-                get_net_ptr()->m_drain_triggered_cycle == Cycles(0)) {
+                get_net_ptr()->m_q_drain_triggered[q] == Cycles(0)) {
 
                 uint32_t cur = (uint32_t)(uint64_t)curCycle();
                 if (cur >= get_net_ptr()->m_q_cooldown_until[q]) {
@@ -240,56 +239,48 @@ Router::wakeup()
                                     uint32_t wait = (uint32_t)(curCycle() - enq);
                                     if (wait > get_net_ptr()->m_stall_threshold) {
                                         get_net_ptr()->m_q_needs_drain[q] = true;
-                                        goto stall_scan_done;
+                                        goto trd_stall_scan_done;
                                     }
                                 }
                             }
                         }
                     }
-                    stall_scan_done:;
+                    trd_stall_scan_done:;
                 }
 
-                // Check if any quadrant wants a drain
-                bool any_needs = false;
-                for (int qq = 0; qq < (int)get_net_ptr()->m_num_quadrants; qq++) {
-                    if (get_net_ptr()->m_q_needs_drain[qq]) {
-                        any_needs = true;
-                        break;
+                if (get_net_ptr()->m_q_needs_drain[q]) {
+                    // First router in this quadrant to detect the need
+                    if (!halt_) {
+                        get_net_ptr()->m_q_drain_triggered[q] = curCycle();
+                        get_net_ptr()->set_halt_quadrant(q, true);
+                        assert(get_net_ptr()->m_q_lock[q] == -1);
+                        get_net_ptr()->scheduleQuadrant_wakeup(q, pre_drain_delay + 1);
                     }
-                }
-
-                if (any_needs) {
-                    if (halt_ == false) {
-                        get_net_ptr()->m_drain_triggered_cycle = curCycle();
-                        get_net_ptr()->set_halt(true);
-                        assert(get_net_ptr()->lock == -1);
-                        get_net_ptr()->scheduleAll_wakeup(pre_drain_delay + 1);
-                    }
-                    if (get_net_ptr()->lock == -1) {
-                        get_net_ptr()->lock = m_id;
-                        spin_safe_ = get_net_ptr()->chck_link_state();
+                    // Claim the per-quadrant lock (first free claimer wins)
+                    if (get_net_ptr()->m_q_lock[q] == -1) {
+                        get_net_ptr()->m_q_lock[q] = m_id;
                     }
                 }
             }
-            // Branch 2: perform the drain after settling window
-            else if ((get_net_ptr()->m_drain_triggered_cycle > Cycles(0)) &&
-                     (curCycle() > get_net_ptr()->m_drain_triggered_cycle +
-                                   Cycles(pre_drain_delay)) &&
-                     (get_net_ptr()->lock != -1)) {
+            // Branch 2: Perform the per-quadrant drain after settling window
+            else if (get_net_ptr()->m_q_drain_triggered[q] > Cycles(0) &&
+                     curCycle() > get_net_ptr()->m_q_drain_triggered[q] +
+                                  Cycles(pre_drain_delay) &&
+                     get_net_ptr()->m_q_lock[q] != -1) {
 
-                assert(halt_ = true);
+                assert(halt_ == true);
 
                 if (halt_ == true) {
-                    get_net_ptr()->set_halt(false);
-                    spin_safe_ = get_net_ptr()->chck_link_state();
-                    assert(spin_safe_);
+                    // Un-halt this quadrant; other quadrants are unaffected
+                    get_net_ptr()->set_halt_quadrant(q, false);
+                    // Do NOT assert spin_safe_ — other quadrants are still active
 
                     if (get_net_ptr()->m_spin_mult == 0) {
                         int itrn = rand() % 10;
                         for (int i = 0; i < itrn; i++) {
                             for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++) {
                                 get_net_ptr()->increment_num_drain();
-                                get_net_ptr()->doSpin(vnet_ * m_vc_per_vnet);
+                                get_net_ptr()->doSpin_quadrant(q, vnet_ * m_vc_per_vnet);
                             }
                         }
                     } else if (get_net_ptr()->m_spin_mult > 0) {
@@ -297,48 +288,42 @@ Router::wakeup()
                             if (get_net_ptr()->drain_all_vc == 1) {
                                 for (int vc_ = 0; vc_ < m_num_vcs; vc_++) {
                                     get_net_ptr()->increment_num_drain();
-                                    get_net_ptr()->doSpin(vc_);
+                                    get_net_ptr()->doSpin_quadrant(q, vc_);
                                 }
                             } else {
                                 for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++) {
                                     get_net_ptr()->increment_num_drain();
-                                    get_net_ptr()->doSpin(vnet_ * m_vc_per_vnet);
+                                    get_net_ptr()->doSpin_quadrant(q, vnet_ * m_vc_per_vnet);
                                 }
                             }
                         }
                     }
                     if (get_net_ptr()->drain_all_vc == 1) {
                         for (int vc_ = 0; vc_ < m_num_vcs; vc_++)
-                            get_net_ptr()->set_flit_time(vc_);
+                            get_net_ptr()->set_flit_time_quadrant(q, vc_);
                     } else {
                         for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++)
-                            get_net_ptr()->set_flit_time(vnet_ * m_vc_per_vnet);
+                            get_net_ptr()->set_flit_time_quadrant(q, vnet_ * m_vc_per_vnet);
                     }
                 }
 
-                // Reset per-quadrant state after drain.
-                // Triggering quadrants get a cooldown; others are unaffected.
+                // Reset this quadrant's state
                 uint32_t cur = (uint32_t)(uint64_t)curCycle();
-                for (int qq = 0; qq < (int)get_net_ptr()->m_num_quadrants; qq++) {
-                    if (get_net_ptr()->m_q_needs_drain[qq]) {
-                        get_net_ptr()->m_q_drain_count[qq]++;
-                        get_net_ptr()->m_q_cooldown_until[qq] =
-                            cur + get_net_ptr()->m_spin_thrshld;
-                        get_net_ptr()->m_q_needs_drain[qq] = false;
-                    }
-                }
-
-                get_net_ptr()->m_drain_triggered_cycle = Cycles(0);
-                get_net_ptr()->lock = -1;
+                get_net_ptr()->m_q_drain_count[q]++;
+                get_net_ptr()->m_q_cooldown_until[q] =
+                    cur + get_net_ptr()->m_spin_thrshld;
+                get_net_ptr()->m_q_needs_drain[q]     = false;
+                get_net_ptr()->m_q_drain_triggered[q] = Cycles(0);
+                get_net_ptr()->m_q_lock[q]             = -1;
                 get_net_ptr()->schedule_wakeup(Cycles(3));
-                get_net_ptr()->scheduleAll_wakeup(2 * get_net_ptr()->m_spin_mult);
+                get_net_ptr()->scheduleQuadrant_wakeup(q,
+                    2 * get_net_ptr()->m_spin_mult);
             }
-            // Branch 3: settling window — just wait, no premature assert.
-            // (Unlike baseline, not all routers fire simultaneously, so the
-            // 2-cycle window doesn't guarantee all links are drained yet.)
-            else if ((get_net_ptr()->m_drain_triggered_cycle > Cycles(0)) &&
-                     (curCycle() - get_net_ptr()->m_drain_triggered_cycle < Cycles(3))) {
-                // nothing to do — let the halt propagate
+            // Branch 3: settling window — just wait
+            else if (get_net_ptr()->m_q_drain_triggered[q] > Cycles(0) &&
+                     curCycle() - get_net_ptr()->m_q_drain_triggered[q] <
+                     Cycles(3)) {
+                // nothing to do — halt is propagating
             }
         }
     }
