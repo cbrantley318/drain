@@ -359,6 +359,18 @@ class GarnetNetwork : public Network, public Consumer
     uint32_t m_spin_thrshld;
     uint32_t m_spin_mult;
     uint32_t drain_all_vc;
+
+    // Regional drain
+    bool m_regional_drain;
+    uint32_t m_num_quadrants;
+    uint32_t m_stall_threshold;
+    std::vector<uint32_t> m_q_cooldown_until;  // don't re-trigger this quadrant before this cycle
+    std::vector<bool>     m_q_needs_drain;     // which quadrants have requested a drain
+    Cycles m_drain_triggered_cycle;            // cycle when current drain was triggered (0 = idle)
+    Stats::Vector m_q_drain_count;             // drains triggered per quadrant
+
+    int getQuadrantOf(int router_id) const;
+
     // int m_spin_config;
     std::string m_conf_file;
     std::string m_spin_file;

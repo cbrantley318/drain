@@ -118,6 +118,12 @@ def define_options(parser):
                       type="int", default=0,
                       help="""when set to 1 all vcs across vnets will be DRAINed
                       by getting spun by the spin-ring.""")
+    parser.add_option("--stall-threshold", type="int", default=0,
+                      help="Flit stall cycles to trigger regional drain (0 = fixed epoch)")
+    parser.add_option("--regional-drain", action="store_true", default=False,
+                      help="Enable quadrant-based regional drain scheduling")
+    parser.add_option("--num-quadrants", type="int", default=4,
+                      help="Number of quadrants for regional drain (2 or 4)")
     parser.add_option("--ni-inj", type="string", default="fcfs",
                       help="'rr'|'fcfs'")
     parser.add_option("--inj-single-vnet", action="store",
@@ -214,3 +220,14 @@ def init_network(options, network, InterfaceClass):
       assert(options.network == "garnet2.0")
       print "setting uTurn-crossbar: ", options.uTurn_crossbar
       network.uTurn_crossbar = options.uTurn_crossbar
+
+    if options.stall_threshold > 0:
+      assert(options.network == "garnet2.0")
+      print "stall-threshold: ", options.stall_threshold
+      network.stall_threshold = options.stall_threshold
+
+    if options.regional_drain:
+      assert(options.network == "garnet2.0")
+      print "regional drain enabled, num_quadrants: ", options.num_quadrants
+      network.regional_drain = True
+      network.num_quadrants = options.num_quadrants

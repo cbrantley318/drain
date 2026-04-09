@@ -138,112 +138,209 @@ Router::wakeup()
     // settles down... this can be done by not allowing any flit to leave the router..
     if(get_net_ptr()->m_spin == true) {
         bool spin_safe_ = false;
-        int pre_drain_delay=2;
-        // cout << "m_net_ptr->lock: " << m_network_ptr->lock << endl;
-        if ((curCycle() > 0) &&
-            (curCycle() % get_net_ptr()->m_spin_thrshld == 0)) {
-            #if(DEBUG_PRINT)
-                cout << "thershold has reached.. put halt mode on.." << endl;
-                cout << "curcycle(): " << curCycle() << endl;
-            #endif
-            // this condition to avoid multiple call to the api
-            if(halt_ == false) {// if my halt is false, set whole network's halt true
-                get_net_ptr()->set_halt(true); // print network state as well
-                assert(get_net_ptr()->lock == -1);
-                get_net_ptr()->scheduleAll_wakeup(pre_drain_delay+1);
-            }
-            // print the network state:
-            if (get_net_ptr()->lock == -1) {
-                get_net_ptr()->lock = m_id;
+        int pre_drain_delay = 2;
+
+        if (!get_net_ptr()->m_regional_drain) {
+            // -------------------------------------------------------
+            // BASELINE: fixed epoch, modulo-based trigger (unchanged)
+            // -------------------------------------------------------
+            if ((curCycle() > 0) &&
+                (curCycle() % get_net_ptr()->m_spin_thrshld == 0)) {
                 #if(DEBUG_PRINT)
-                get_net_ptr()->scanNetwork();
+                    cout << "thershold has reached.. put halt mode on.." << endl;
+                    cout << "curcycle(): " << curCycle() << endl;
                 #endif
-                spin_safe_ = get_net_ptr()->chck_link_state();
+                if(halt_ == false) {
+                    get_net_ptr()->set_halt(true);
+                    assert(get_net_ptr()->lock == -1);
+                    get_net_ptr()->scheduleAll_wakeup(pre_drain_delay+1);
+                }
+                if (get_net_ptr()->lock == -1) {
+                    get_net_ptr()->lock = m_id;
+                    #if(DEBUG_PRINT)
+                    get_net_ptr()->scanNetwork();
+                    #endif
+                    spin_safe_ = get_net_ptr()->chck_link_state();
+                }
             }
-        }
-        // This is the condition which makes the network-halt false.
-        else if ((curCycle() > get_net_ptr()->m_spin_thrshld) &&
-            (curCycle() % get_net_ptr()->m_spin_thrshld > pre_drain_delay/*delay*/) &&
-            (get_net_ptr()->lock != -1)) {
+            else if ((curCycle() > get_net_ptr()->m_spin_thrshld) &&
+                (curCycle() % get_net_ptr()->m_spin_thrshld > pre_drain_delay) &&
+                (get_net_ptr()->lock != -1)) {
 
-            #if(DEBUG_PRINT)
-                cout << "putting off the halt_ signal:" << endl;
-                cout << "curcycle(): " << curCycle() << endl;
-            #endif
-			assert(halt_ = true);
+                assert(halt_ = true);
 
-            /*
-            At this point there should not be any flit on any link... put
-            assert for the same here
-            */
+                if (halt_ == true) {
+                    get_net_ptr()->set_halt(false);
+                    spin_safe_ = get_net_ptr()->chck_link_state();
+                    assert(spin_safe_);
 
-            if (halt_ == true) {
-                get_net_ptr()->set_halt(false);
-                // this too is a spin safe region
-                spin_safe_ = get_net_ptr()->chck_link_state();
-                assert(spin_safe_);
-
-                if (get_net_ptr()->m_spin_mult == 0) {
-                    int itrn = rand() % 10;
-                    for (int i = 0; i < itrn; i++) {
-                        // only drain the base VC
-                        // of each 'vnet'
-                        for(int vnet_=0; vnet_<m_virtual_networks; vnet_++) {
-                            // update stats
-                            get_net_ptr()->increment_num_drain();
-                            // Doing spin here...
-                            get_net_ptr()->doSpin(vnet_*m_vc_per_vnet);
-                        }
-                    }
-                } else if (get_net_ptr()->m_spin_mult > 0) {
-                    for (int i = 0; i < get_net_ptr()->m_spin_mult; i++) {
-                        // Doing spin here...
-                        if(get_net_ptr()->drain_all_vc == 1) {
-                            for(int vc_ = 0; vc_ < m_num_vcs; vc_++) {
-                                get_net_ptr()->increment_num_drain();
-                                get_net_ptr()->doSpin(vc_);
-                            }
-                        } else {
-                            // only drain the base VC
-                            // of each 'vnet'
+                    if (get_net_ptr()->m_spin_mult == 0) {
+                        int itrn = rand() % 10;
+                        for (int i = 0; i < itrn; i++) {
                             for(int vnet_=0; vnet_<m_virtual_networks; vnet_++) {
                                 get_net_ptr()->increment_num_drain();
                                 get_net_ptr()->doSpin(vnet_*m_vc_per_vnet);
                             }
                         }
+                    } else if (get_net_ptr()->m_spin_mult > 0) {
+                        for (int i = 0; i < get_net_ptr()->m_spin_mult; i++) {
+                            if(get_net_ptr()->drain_all_vc == 1) {
+                                for(int vc_ = 0; vc_ < m_num_vcs; vc_++) {
+                                    get_net_ptr()->increment_num_drain();
+                                    get_net_ptr()->doSpin(vc_);
+                                }
+                            } else {
+                                for(int vnet_=0; vnet_<m_virtual_networks; vnet_++) {
+                                    get_net_ptr()->increment_num_drain();
+                                    get_net_ptr()->doSpin(vnet_*m_vc_per_vnet);
+                                }
+                            }
+                        }
+                    }
+                    if(get_net_ptr()->drain_all_vc == 1) {
+                        for(int vc_ = 0; vc_ < m_num_vcs; vc_++)
+                            get_net_ptr()->set_flit_time(vc_);
+                    } else {
+                        for(int vnet_=0; vnet_<m_virtual_networks; vnet_++)
+                            get_net_ptr()->set_flit_time(vnet_*m_vc_per_vnet);
                     }
                 }
-                // we come here after successfully spin-ing
-                // pre-requisite number of times; set the time
-                // in the flits present in the network ( except
-                // injection/ejection ports ) accordingly.
-                if(get_net_ptr()->drain_all_vc == 1) {
-                    for(int vc_ = 0; vc_ < m_num_vcs; vc_++) {
-                        get_net_ptr()->set_flit_time(vc_);
+
+                get_net_ptr()->lock = -1;
+                get_net_ptr()->schedule_wakeup(Cycles(3));
+                get_net_ptr()->scheduleAll_wakeup(2*get_net_ptr()->m_spin_mult);
+            }
+            else if (curCycle() % get_net_ptr()->m_spin_thrshld < 3) {
+                if (m_id == get_net_ptr()->lock)
+                    spin_safe_ = get_net_ptr()->chck_link_state();
+                if(curCycle() % get_net_ptr()->m_spin_thrshld == 2 &&
+                    (m_id == get_net_ptr()->lock))
+                    assert(spin_safe_);
+            }
+
+        } else {
+            // -------------------------------------------------------
+            // REGIONAL DRAIN: per-quadrant deadline tracking
+            // -------------------------------------------------------
+            int q = get_net_ptr()->getQuadrantOf(m_id);
+
+            // Branch 1: stall-triggered drain per quadrant.
+            // Scan this router's VCs; if any flit has waited > stall_threshold
+            // and the quadrant is past its cooldown, mark it as needing a drain.
+            if (curCycle() > 0 &&
+                get_net_ptr()->m_drain_triggered_cycle == Cycles(0)) {
+
+                uint32_t cur = (uint32_t)(uint64_t)curCycle();
+                if (cur >= get_net_ptr()->m_q_cooldown_until[q]) {
+                    for (int inport = 0; inport < (int)m_input_unit.size(); inport++) {
+                        for (int vc = 0; vc < m_num_vcs; vc++) {
+                            if (!m_input_unit[inport]->vc_isEmpty(vc)) {
+                                Cycles enq = m_input_unit[inport]->get_enqueue_time(vc);
+                                if (enq != Cycles(INFINITE_)) {
+                                    uint32_t wait = (uint32_t)(curCycle() - enq);
+                                    if (wait > get_net_ptr()->m_stall_threshold) {
+                                        get_net_ptr()->m_q_needs_drain[q] = true;
+                                        goto stall_scan_done;
+                                    }
+                                }
+                            }
+                        }
                     }
-                } else {
-                    for(int vnet_=0; vnet_<m_virtual_networks; vnet_++) {
-                        get_net_ptr()->set_flit_time(vnet_*m_vc_per_vnet);
+                    stall_scan_done:;
+                }
+
+                // Check if any quadrant wants a drain
+                bool any_needs = false;
+                for (int qq = 0; qq < (int)get_net_ptr()->m_num_quadrants; qq++) {
+                    if (get_net_ptr()->m_q_needs_drain[qq]) {
+                        any_needs = true;
+                        break;
+                    }
+                }
+
+                if (any_needs) {
+                    if (halt_ == false) {
+                        get_net_ptr()->m_drain_triggered_cycle = curCycle();
+                        get_net_ptr()->set_halt(true);
+                        assert(get_net_ptr()->lock == -1);
+                        get_net_ptr()->scheduleAll_wakeup(pre_drain_delay + 1);
+                    }
+                    if (get_net_ptr()->lock == -1) {
+                        get_net_ptr()->lock = m_id;
+                        spin_safe_ = get_net_ptr()->chck_link_state();
                     }
                 }
             }
+            // Branch 2: perform the drain after settling window
+            else if ((get_net_ptr()->m_drain_triggered_cycle > Cycles(0)) &&
+                     (curCycle() > get_net_ptr()->m_drain_triggered_cycle +
+                                   Cycles(pre_drain_delay)) &&
+                     (get_net_ptr()->lock != -1)) {
 
-            get_net_ptr()->lock = -1; //release the lock
-            get_net_ptr()->schedule_wakeup(Cycles(3));
+                assert(halt_ = true);
 
-            // spinning is done.. now wakeup all routers for next cycle
-            get_net_ptr()->scheduleAll_wakeup(2*get_net_ptr()->m_spin_mult);
-        }
-        else if (curCycle() % get_net_ptr()->m_spin_thrshld < 3/*delay*/) {
-            if (m_id == get_net_ptr()->lock) {
-                spin_safe_ = get_net_ptr()->chck_link_state();
+                if (halt_ == true) {
+                    get_net_ptr()->set_halt(false);
+                    spin_safe_ = get_net_ptr()->chck_link_state();
+                    assert(spin_safe_);
+
+                    if (get_net_ptr()->m_spin_mult == 0) {
+                        int itrn = rand() % 10;
+                        for (int i = 0; i < itrn; i++) {
+                            for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++) {
+                                get_net_ptr()->increment_num_drain();
+                                get_net_ptr()->doSpin(vnet_ * m_vc_per_vnet);
+                            }
+                        }
+                    } else if (get_net_ptr()->m_spin_mult > 0) {
+                        for (int i = 0; i < get_net_ptr()->m_spin_mult; i++) {
+                            if (get_net_ptr()->drain_all_vc == 1) {
+                                for (int vc_ = 0; vc_ < m_num_vcs; vc_++) {
+                                    get_net_ptr()->increment_num_drain();
+                                    get_net_ptr()->doSpin(vc_);
+                                }
+                            } else {
+                                for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++) {
+                                    get_net_ptr()->increment_num_drain();
+                                    get_net_ptr()->doSpin(vnet_ * m_vc_per_vnet);
+                                }
+                            }
+                        }
+                    }
+                    if (get_net_ptr()->drain_all_vc == 1) {
+                        for (int vc_ = 0; vc_ < m_num_vcs; vc_++)
+                            get_net_ptr()->set_flit_time(vc_);
+                    } else {
+                        for (int vnet_ = 0; vnet_ < m_virtual_networks; vnet_++)
+                            get_net_ptr()->set_flit_time(vnet_ * m_vc_per_vnet);
+                    }
+                }
+
+                // Reset per-quadrant state after drain.
+                // Triggering quadrants get a cooldown; others are unaffected.
+                uint32_t cur = (uint32_t)(uint64_t)curCycle();
+                for (int qq = 0; qq < (int)get_net_ptr()->m_num_quadrants; qq++) {
+                    if (get_net_ptr()->m_q_needs_drain[qq]) {
+                        get_net_ptr()->m_q_drain_count[qq]++;
+                        get_net_ptr()->m_q_cooldown_until[qq] =
+                            cur + get_net_ptr()->m_spin_thrshld;
+                        get_net_ptr()->m_q_needs_drain[qq] = false;
+                    }
+                }
+
+                get_net_ptr()->m_drain_triggered_cycle = Cycles(0);
+                get_net_ptr()->lock = -1;
+                get_net_ptr()->schedule_wakeup(Cycles(3));
+                get_net_ptr()->scheduleAll_wakeup(2 * get_net_ptr()->m_spin_mult);
             }
-
-            if(curCycle() % get_net_ptr()->m_spin_thrshld == 2 &&
-                (m_id == get_net_ptr()->lock)) {
-                // put an additional assert that there is nothing on the link...
-                // cout << "########### SPIN-SAFE NOW #############" << endl;
-                assert(spin_safe_);
+            // Branch 3: settling window checks
+            else if ((get_net_ptr()->m_drain_triggered_cycle > Cycles(0)) &&
+                     (curCycle() - get_net_ptr()->m_drain_triggered_cycle < Cycles(3))) {
+                if (m_id == get_net_ptr()->lock)
+                    spin_safe_ = get_net_ptr()->chck_link_state();
+                if ((curCycle() == get_net_ptr()->m_drain_triggered_cycle + Cycles(2)) &&
+                    (m_id == get_net_ptr()->lock))
+                    assert(spin_safe_);
             }
         }
     }

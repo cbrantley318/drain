@@ -71,6 +71,12 @@ class GarnetNetwork(RubyNetwork):
                       protocol buffer into single vnet of the network")
     spin_file = Param.String(Parent.spin_file,
 					"file path containing SPIN-ring information for DRAIN")
+    stall_threshold = Param.UInt32(0,
+                    "Flit stall cycles to trigger regional drain (0 = fixed epoch)")
+    regional_drain = Param.Bool(False,
+                    "Enable quadrant-based regional drain scheduling")
+    num_quadrants = Param.UInt32(4,
+                    "Number of mesh quadrants for regional drain (2 or 4)")
 
 class GarnetNetworkInterface(ClockedObject):
     type = 'GarnetNetworkInterface'

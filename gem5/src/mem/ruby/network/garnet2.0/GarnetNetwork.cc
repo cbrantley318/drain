@@ -113,6 +113,10 @@ GarnetNetwork::GarnetNetwork(const Params *p)
     m_spin_file = p->spin_file;
     m_uTurn_crossbar = p->uTurn_crossbar;
     drain_all_vc = p->drain_all_vc;
+    m_stall_threshold = p->stall_threshold;
+    m_regional_drain  = p->regional_drain;
+    m_num_quadrants   = p->num_quadrants;
+    m_drain_triggered_cycle = Cycles(0);
 
     lock = -1;
 
@@ -169,6 +173,16 @@ GarnetNetwork::GarnetNetwork(const Params *p)
     }
 }
 
+
+int
+GarnetNetwork::getQuadrantOf(int router_id) const
+{
+    int row  = router_id / m_num_cols;
+    int col  = router_id % m_num_cols;
+    int qrow = (m_num_quadrants >= 2) ? (row / (m_num_rows / 2)) : 0;
+    int qcol = (m_num_quadrants == 4) ? (col / (m_num_cols / 2)) : 0;
+    return qrow * (m_num_quadrants == 4 ? 2 : 1) + qcol;
+}
 
 void
 GarnetNetwork::init_spinRing()
@@ -535,6 +549,15 @@ GarnetNetwork::init()
     } else {
         m_num_rows = -1;
         m_num_cols = -1;
+    }
+
+    if (m_regional_drain) {
+        assert(m_num_quadrants == 2 || m_num_quadrants == 4);
+        assert(m_spin);
+        assert(m_num_rows > 0 && m_num_cols > 0);
+        assert(m_stall_threshold > 0);
+        m_q_cooldown_until.assign(m_num_quadrants, 0);
+        m_q_needs_drain.assign(m_num_quadrants, false);
     }
 
     // FaultModel: declare each router to the fault model
@@ -1189,6 +1212,10 @@ GarnetNetwork::regStats()
         .name(name() + ".total_bubble_movement");
     m_num_drain
         .name(name() + ".total_DRAIN_spins");
+    m_q_drain_count
+        .init(m_num_quadrants)
+        .name(name() + ".q_drain_count")
+        .desc("Number of drains triggered by each quadrant");
 
     m_marked_pkt_received
         .init(m_virtual_networks)
