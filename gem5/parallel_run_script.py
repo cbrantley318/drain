@@ -11,18 +11,29 @@ file = ['64_nodes-connectivity_matrix_0-links_removed_0.txt', '256_nodes-connect
 
 routing_algorithm = ["ADAPT_RAND_", "UP_DN_", "Escape_VC_UP_DN_"]
 
-num_cores = [64, 256]
-num_rows = [8, 16]
+# num_cores = [64, 256]
+num_cores = [64]
+# num_rows = [8, 16]
+num_rows = [8]
+
+start_injection_rate = 0.02   #DEFAULT
+# max_injection_rate = 1.0    # multiple of 0.02
+
+# start_injection_rate = 0.52
+max_injection_rate = 0.7
+
 
 os.system('rm -rf ./results')
 os.system('mkdir results')
+num_processes = 20              #this is the number of cores you want gem5 to run on
 
 out_dir = './results'
 cycles = 100000
 vc_ = 4
-stall_thresh_ = 50
+stall_thresh_ = 0
+# stall_thresh_ = 50
 rout_ = 0
-spin_freq = 1024
+spin_freq = 65536
 
 
 def run_sim(args):
@@ -35,25 +46,24 @@ def run_sim(args):
            "--spin-file=spin_configs/SR_{10:s} --spin-freq={7:d} --spin-mult=1 "
            "--uTurn-crossbar=1 --inj-vnet=0 --vcs-per-vnet={5:d} "
            "--injectionrate={6:1.2f} --synthetic={11:s} "
-           "--stall-threshold={12:d} "
-           "--routing-algorithm={13:d} 2>>/tmp/gem5_errors.log").format(
+           "--routing-algorithm={12:d} 2>>/tmp/gem5_errors.log").format(
                binary, out_dir, num_cores[c], bench_caps[b],
                routing_algorithm[rout_], vc_, injection_rate,
-               spin_freq, num_rows[c], cycles, file[c], bench[b], stall_thresh_, rout_)
+               spin_freq, num_rows[c], cycles, file[c], bench[b], rout_)
     os.system(cmd)
 
 # Build all jobs upfront
 jobs = []
 for c in range(len(num_cores)):
     for b in range(len(bench)):
-        injection_rate = 0.02
-        while injection_rate <= 1.0:
+        injection_rate = start_injection_rate
+        while injection_rate <= max_injection_rate:
             jobs.append((c, b, round(injection_rate, 2)))
             injection_rate += 0.02
 
 print("Running {} simulations across 20 cores...".format(len(jobs)))
 
-pool = Pool(processes=15)
+pool = Pool(processes=num_processes)
 pool.map(run_sim, jobs)
 pool.close()
 pool.join()
