@@ -30,9 +30,9 @@ num_processes = 20              #this is the number of cores you want gem5 to ru
 out_dir = './results'
 cycles = 100000
 vc_ = 2
-stall_thresh_ = 100
+stall_thresh_ = 0
 rout_ = 0
-spin_freq = 100
+spin_freq = 0
 
 def run_sim(args):
     c, b, injection_rate = args
@@ -60,6 +60,7 @@ def run_sim(args):
             "--uTurn-crossbar=1 --inj-vnet=0 --vcs-per-vnet={5:d} "
             "--injectionrate={6:1.2f} --synthetic={11:s} "
             '--regional-drain --num-quadrants=4 --stall-threshold={12:d} '
+            '--regional-spin-file=spin_configs/SR_16_nodes-connectivity_matrix_0-links_removed_0.txt '
             "--routing-algorithm={13:d} 2>>/tmp/gem5_errors.log").format(
                 binary, out_dir, num_cores[c], bench_caps[b],
                 routing_algorithm[rout_], vc_, injection_rate,

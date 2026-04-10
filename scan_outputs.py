@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 
 root = "."
 search_term = "average_packet_latency"
-search_term = "max_flit_latency"
-search_term = "min_flit_latency"
+# search_term = "max_flit_latency"
+# search_term = "min_flit_latency"
+
 target_dirs = ["vc-2", "vc-4"]
 files = []
 
